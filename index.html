@@ -7,10 +7,10 @@
 <style>
 body{font-family:Arial;margin:0;text-align:center;background:#111;color:#fff}
 #cameraContainer{position:relative;width:100%;max-width:480px;margin:20px auto}
-#video{width:100%;border-radius:8px}
+#video{width:100%;height:auto;border-radius:8px;background:#000}
 #overlay{position:absolute;top:0;left:0;width:100%;height:100%;border:4px solid rgba(255,255,0,0.7);border-radius:6px;pointer-events:none}
-#captureBtn{margin-top:15px;padding:12px 20px;background:#28a745;border:none;border-radius:6px;font-size:18px;color:white;cursor:pointer}
-#canvasOutput{margin:20px auto;max-width:500px;width:100%;border:2px solid white;background:black}
+#captureBtn{margin-top:20px;width:80%;max-width:320px;height:60px;font-size:22px;background:#28a745;border:none;border-radius:10px;color:white;font-weight:bold;cursor:pointer}
+#canvasOutput{margin:20px auto;max-width:500px;width:100%;border:2px solid white;background:#000}
 #resultado{font-size:20px;margin-top:20px;white-space:pre-line}
 </style>
 </head>
@@ -23,7 +23,7 @@ body{font-family:Arial;margin:0;text-align:center;background:#111;color:#fff}
 <div id="overlay"></div>
 </div>
 
-<button id="captureBtn">Capturar</button>
+<button id="captureBtn">CAPTURAR</button>
 
 <canvas id="canvasOutput"></canvas>
 
@@ -39,12 +39,13 @@ navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"}})
 .then(s=>video.srcObject=s)
 .catch(e=>alert("Permita acesso à câmera."));
 
-function capturarFrame(){
+function frame(){
+let w=video.videoWidth;
+let h=video.videoHeight;
+if(w===0||h===0)return null;
 let c=document.createElement("canvas");
-c.width=video.videoWidth;
-c.height=video.videoHeight;
-let ctx=c.getContext("2d");
-ctx.drawImage(video,0,0);
+c.width=w;c.height=h;
+c.getContext("2d").drawImage(video,0,0,w,h);
 return c;
 }
 
@@ -105,11 +106,9 @@ let numeroQuestao=1;
 
 for(let L=0;L<linhas;L++){
 for(let C=0;C<colunas;C++){
-
 let x0=Math.floor(C*wColuna);
 let y0=Math.floor(L*hLinha);
 let intensidades=[];
-
 for(let a=0;a<qtdAlt;a++){
 let rx=x0;
 let ry=Math.floor(y0+a*hAlt);
@@ -118,18 +117,14 @@ let m=cv.mean(roi)[0];
 intensidades.push(m);
 roi.delete();
 }
-
 let menor=Math.min(...intensidades);
 let diffs=intensidades.map(v=>v-menor);
 let LIM=18;
 let marcados=diffs.map((d,i)=>({d,i})).filter(o=>o.d<LIM).map(o=>o.i);
-
 let r;
-
-if(marcados.length===0) r="EM BRANCO";
-else if(marcados.length===1) r=alternativas[marcados[0]];
+if(marcados.length===0)r="EM BRANCO";
+else if(marcados.length===1)r=alternativas[marcados[0]];
 else r="MAIS DE UMA";
-
 respostas.push(r);
 numeroQuestao++;
 }
@@ -145,26 +140,29 @@ return respostas;
 function corrigir(respostas){
 let gabarito=[];
 let alt=["A","B","C","D","E"];
-for(let i=0;i<70;i++){
-gabarito.push(alt[i%5]);
-}
+for(let i=0;i<70;i++)gabarito.push(alt[i%5]);
 let acertos=0;
 let linhas=[];
 for(let i=0;i<70;i++){
 let q=i+1;
 let resp=respostas[i];
 let gab=gabarito[i];
-if(resp===gab) acertos++;
+if(resp===gab)acertos++;
 linhas.push(q+" - "+resp+" (Gabarito: "+gab+")");
 }
 return {acertos,linhas};
 }
 
 document.getElementById("captureBtn").onclick=()=>{
-let temp=capturarFrame();
-let src=cv.imread(temp);
+let temp=frame();
+if(!temp){
+alert("Câmera ainda carregando. Aguarde 1 segundo e tente novamente.");
+return;
+}
 
+let src=cv.imread(temp);
 cv.resize(src,src,new cv.Size(1500,(src.rows*1500)/src.cols));
+
 let n1=normalizarLAB(src);
 let suav=new cv.Mat();
 cv.bilateralFilter(n1,suav,7,75,75);
@@ -178,9 +176,7 @@ let cnts=new cv.MatVector();
 let hier=new cv.Mat();
 cv.findContours(e,cnts,hier,cv.RETR_EXTERNAL,cv.CHAIN_APPROX_SIMPLE);
 
-let best=null;
-let bestArea=0;
-
+let best=null,bestArea=0;
 for(let i=0;i<cnts.size();i++){
 let c=cnts.get(i);
 let peri=cv.arcLength(c,true);
@@ -188,14 +184,11 @@ let approx=new cv.Mat();
 cv.approxPolyDP(c,approx,0.02*peri,true);
 if(approx.rows===4){
 let area=cv.contourArea(c);
-if(area>bestArea){
-bestArea=area;
-best=approx;
-}
+if(area>bestArea){bestArea=area;best=approx;}
 }
 }
 
-if(!best){alert("Folha não encontrada");return;}
+if(!best){alert("Folha não encontrada.");return;}
 
 let pts=[];
 for(let i=0;i<4;i++){
@@ -207,25 +200,18 @@ let tl=pts[0],br=pts[3];
 let tr=pts[1].x>pts[2].x?pts[1]:pts[2];
 let bl=pts[1].x>pts[2].x?pts[2]:pts[1];
 
-let w=Math.max(
-Math.hypot(tr.x-tl.x,tr.y-tl.y),
-Math.hypot(br.x-bl.x,br.y-bl.y)
-);
-let h=Math.max(
-Math.hypot(tr.x-br.x,tr.y-br.y),
-Math.hypot(tl.x-bl.x,tl.y-bl.y)
-);
+let w=Math.max(Math.hypot(tr.x-tl.x,tr.y-tl.y),Math.hypot(br.x-bl.x,br.y-bl.y));
+let h=Math.max(Math.hypot(tr.x-br.x,tr.y-br.y),Math.hypot(tl.x-bl.x,tl.y-bl.y));
 
-let srcQuad=cv.matFromArray(4,1,cv.CV_32FC2,[tl.x,tl.y,tr.x,tr.y,br.x,br.y,bl.x,bl.y]);
-let dstQuad=cv.matFromArray(4,1,cv.CV_32FC2,[0,0,w,0,w,h,0,h]);
+let srcQ=cv.matFromArray(4,1,cv.CV_32FC2,[tl.x,tl.y,tr.x,tr.y,br.x,br.y,bl.x,bl.y]);
+let dstQ=cv.matFromArray(4,1,cv.CV_32FC2,[0,0,w,0,w,h,0,h]);
 
-let M=cv.getPerspectiveTransform(srcQuad,dstQuad);
+let M=cv.getPerspectiveTransform(srcQ,dstQ);
 let warped=new cv.Mat();
 cv.warpPerspective(src,warped,M,new cv.Size(w,h));
 
 let n2=normalizarLAB(warped);
 let semGrade=removerGrade(n2);
-
 let respostas=mapearQuestoes(semGrade);
 let r=corrigir(respostas);
 
