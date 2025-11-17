@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <title>Gabarito – Versão com Câmera</title>
+    <script async src="https://docs.opencv.org/4.x/opencv.js"></script>
+
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            text-align: center;
+            background: #111;
+            color: white;
+        }
+
+        #cameraContainer {
+            position: relative;
+            width: 100%;
+            max-width: 480px;
+            margin: 20px auto;
+        }
+
+        #video {
+            width: 100%;
+            border-radius: 8px;
+        }
+
+        /* Moldura-guia */
+        #overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            border: 4px solid rgba(255, 255, 0, 0.7);
+            box-sizing: border-box;
+            border-radius: 6px;
+            pointer-events: none;
+        }
+
+        #captureBtn {
+            margin-top: 15px;
+            padding: 12px 20px;
+            background: #28a745;
+            border: none;
+            border-radius: 6px;
+            font-size: 18px;
+            color: white;
+            cursor: pointer;
+        }
+
+        #canvasOutput {
+            margin: 20px auto;
+            max-width: 500px;
+            width: 100%;
+            border: 2px solid white;
+            background: black;
+        }
+    </style>
+</head>
+<body>
+
+<h2>Scanner de Gabarito – Versão de Teste</h2>
+
+<div id="cameraContainer">
+    <video id="video" autoplay playsinline></video>
+    <div id="overlay"></div>
+</div>
+
+<button id="captureBtn">Capturar Foto</button>
+
+<br><br>
+
+<canvas id="canvasOutput"></canvas>
+
+<script>
+
+//////////////////////////////////////////////////////////////////
+// ABRIR CÂMERA
+//////////////////////////////////////////////////////////////////
+
+const video = document.getElementById("video");
+const canvasOutput = document.getElementById("canvasOutput");
+let stream;
+
+navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
+    .then(s => {
+        stream = s;
+        video.srcObject = s;
+    })
+    .catch(err => alert("Não foi possível acessar a câmera. Permita o acesso nas configurações."));
+
+//////////////////////////////////////////////////////////////////
+// FUNÇÃO: CAPTURAR FRAME DO VÍDEO
+//////////////////////////////////////////////////////////////////
+
+function capturarFrame() {
+    const canvasTemp = document.createElement("canvas");
+    canvasTemp.width = video.videoWidth;
+    canvasTemp.height = video.videoHeight;
+
+    const ctx = canvasTemp.getContext("2d");
+    ctx.drawImage(video, 0, 0);
+
+    return canvasTemp;
+}
+
+//////////////////////////////////////////////////////////////////
+// NORMALIZAÇÃO GLOBAL LAB + CLAHE
+//////////////////////////////////////////////////////////////////
+
+function normalizarLAB(src) {
+    let lab = new cv.Mat();
+    cv.cvtColor(src, lab, cv.COLOR_RGBA2LAB);
+
+    let channels = new cv.MatVector();
+    cv.split(lab, channels);
+
+    let l = channels.get(0);
+
+    let clahe = new cv.CLAHE(2.0, new cv.Size(8, 8));
+    clahe.apply(l, l);
+
+    channels.set(0, l);
+    cv.merge(channels, lab);
+
+    let dst = new cv.Mat();
+    cv.cvtColor(lab, dst, cv.COLOR_LAB2RGBA);
+
+    lab.delete(); channels.delete(); l.delete(); clahe.delete();
+    return dst;
+}
+
+//////////////////////////////////////////////////////////////////
+// REMOVER LINHAS DA GRADE
+//////////////////////////////////////////////////////////////////
+
+function removerGrade(img) {
+    let gray = new cv.Mat();
+    cv.cvtColor(img, gray, cv.COLOR_RGBA2GRAY);
+
+    let adapt = new cv.Mat();
+    cv.adaptiveThreshold(gray, adapt, 255, cv.ADAPTIVE_THRESH_MEAN_C, cv.THRESH_BINARY_INV, 15, 10);
+
+    let horiz = new cv.Mat();
+    let vert = new cv.Mat();
+    let kernelH = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(40, 1));
+    let kernelV = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(1, 40));
+
+    cv.morphologyEx(adapt, horiz, cv.MORPH_OPEN, kernelH);
+    cv.morphologyEx(adapt, vert, cv.MORPH_OPEN, kernelV);
+
+    let linhas = new cv.Mat();
+    cv.add(horiz, vert, linhas);
+    cv.bitwise_not(linhas, linhas);
+
+    let resultado = new cv.Mat();
+    cv.bitwise_and(img, img, resultado, linhas);
+
+    cv.medianBlur(resultado, resultado, 3);
+
+    gray.delete(); adapt.delete(); horiz.delete(); vert.delete(); kernelH.delete(); kernelV.delete(); linhas.delete();
+    return resultado;
+}
+
+//////////////////////////////////////////////////////////////////
+// DIVISÃO EM GRADE + LEITURA DAS QUESTÕES
+//////////////////////////////////////////////////////////////////
+
+function mapearQuestoes(img) {
+
+    const larguraFinal = 800;
+    const alturaFinal = Math.round(larguraFinal * img.rows / img.cols);
+
+    cv.resize(img, img, new cv.Size(larguraFinal, alturaFinal));
+
+    let cinza = new cv.Mat();
+    let bin = new cv.Mat();
+    cv.cvtColor(img, cinza, cv.COLOR_RGBA2GRAY);
+    cv.threshold(cinza, bin, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU);
+
+    let mapeado = img.clone();
+
+    let cols = 4;
+    let rows = 25;
+
+    let wCol = larguraFinal / cols;
+    let hRow = alturaFinal / rows;
+
+    let binCinza = new cv.Mat();
+    cv.cvtColor(bin, binCinza, cv.COLOR_GRAY2RGBA);
+
+    for (let c = 0; c < cols; c++) {
+        for (let r = 0; r < rows; r++) {
+
+            let x = c * wCol;
+            let y = r * hRow;
+
+            let partes = 6;
+            let wParte = wCol / partes;
+
+            let intensidades = [];
+
+            for (let p = 1; p < partes; p++) {
+                let rx = Math.floor(x + p * wParte);
+                let ry = Math.floor(y);
+
+                let roi = cinza.roi(new cv.Rect(rx, ry, Math.floor(wParte), Math.floor(hRow)));
+
+                intensidades.push(cv.mean(roi)[0]);
+                roi.delete();
+            }
+        }
+    }
+
+    canvasOutput.width = larguraFinal;
+    canvasOutput.height = alturaFinal;
+    cv.imshow("canvasOutput", img);
+
+    cinza.delete(); bin.delete(); mapeado.delete(); binCinza.delete();
+}
+
+//////////////////////////////////////////////////////////////////
+// PROCESSAMENTO COMPLETO (PIPELINE FINAL)
+//////////////////////////////////////////////////////////////////
+
+document.getElementById("captureBtn").onclick = () => {
+
+    const canvasTemp = capturarFrame();
+    let src = cv.imread(canvasTemp);
+
+    cv.resize(src, src, new cv.Size(1500, (src.rows * 1500) / src.cols));
+
+    let norm = normalizarLAB(src);
+
+    let suavizada = new cv.Mat();
+    cv.bilateralFilter(norm, suavizada, 7, 75, 75);
+
+    let gray = new cv.Mat();
+    let edges = new cv.Mat();
+    cv.cvtColor(suavizada, gray, cv.COLOR_RGBA2GRAY);
+    cv.Canny(gray, edges, 50, 150);
+
+    let contours = new cv.MatVector();
+    let hier = new cv.Mat();
+    cv.findContours(edges, contours, hier, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+    let melhor = null;
+    let maiorArea = 0;
+
+    for (let i = 0; i < contours.size(); i++) {
+        let cnt = contours.get(i);
+        let peri = cv.arcLength(cnt, true);
+        let approx = new cv.Mat();
+        cv.approxPolyDP(cnt, approx, 0.02 * peri, true);
+
+        if (approx.rows === 4) {
+            let area = cv.contourArea(cnt);
+            if (area > maiorArea) {
+                maiorArea = area;
+                melhor = approx;
+            }
+        }
+    }
+
+    if (!melhor) {
+        alert("Não foi possível encontrar a folha.");
+        return;
+    }
+
+    let pts = [];
+    for (let i = 0; i < 4; i++) {
+        let p = melhor.intPtr(i);
+        pts.push(new cv.Point(p[0], p[1]));
+    }
+
+    pts.sort((a, b) => a.x + a.y - (b.x + b.y));
+
+    let tl = pts[0];
+    let br = pts[3];
+
+    let tr = pts[1].x > pts[2].x ? pts[1] : pts[2];
+    let bl = pts[1].x <= pts[2].x ? pts[1] : pts[2];
+
+    let w = Math.max(
+        Math.hypot(tr.x - tl.x, tr.y - tl.y),
+        Math.hypot(br.x - bl.x, br.y - bl.y)
+    );
+    let h = Math.max(
+        Math.hypot(tr.x - br.x, tr.y - br.y),
+        Math.hypot(tl.x - bl.x, tl.y - bl.y)
+    );
+
+    let srcQuad = cv.matFromArray(4, 1, cv.CV_32FC2, [
+        tl.x, tl.y, tr.x, tr.y, br.x, br.y, bl.x, bl.y
+    ]);
+    let dstQuad = cv.matFromArray(4, 1, cv.CV_32FC2, [
+        0, 0, w, 0, w, h, 0, h
+    ]);
+
+    let M = cv.getPerspectiveTransform(srcQuad, dstQuad);
+    let warped = new cv.Mat();
+    cv.warpPerspective(src, warped, M, new cv.Size(w, h));
+
+    let norm2 = normalizarLAB(warped);
+
+    let semGrade = removerGrade(norm2);
+
+    mapearQuestoes(semGrade);
+
+};
+
+</script>
+</body>
+</html>
