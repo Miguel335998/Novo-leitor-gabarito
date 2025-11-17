@@ -5,22 +5,22 @@
 <title>Leitor de Gabarito</title>
 <script async src="https://docs.opencv.org/4.x/opencv.js"></script>
 <style>
-body{font-family:Arial;margin:0;text-align:center;background:#111;color:#fff}
+body{font-family:Arial;margin:0;background:#111;color:white;text-align:center}
 #cameraContainer{position:relative;width:100%;max-width:480px;margin:20px auto}
-#video{width:100%;height:auto;border-radius:8px;background:#000}
-#overlay{position:absolute;top:0;left:0;width:100%;height:100%;border:4px solid rgba(255,255,0,0.7);border-radius:6px;pointer-events:none}
-#captureBtn{margin-top:20px;width:80%;max-width:320px;height:60px;font-size:22px;background:#28a745;border:none;border-radius:10px;color:white;font-weight:bold;cursor:pointer;opacity:.4;pointer-events:none}
-#canvasOutput{margin:20px auto;max-width:500px;width:100%;border:2px solid white;background:#000}
-#resultado{font-size:20px;margin-top:20px;white-space:pre-line}
+#video{width:100%;border-radius:10px}
+#overlay{position:absolute;top:0;left:0;width:100%;height:100%;border:3px solid rgba(255,255,255,0.4);border-radius:10px;pointer-events:none}
+#captureBtn{width:80%;max-width:350px;height:70px;background:#28a745;border:none;border-radius:12px;margin-top:20px;color:white;font-size:24px;font-weight:bold;cursor:pointer;z-index:9999;position:relative}
+#canvasOutput{margin:20px auto;width:90%;max-width:500px;border:2px solid white;background:black}
+#resultado{font-size:24px;margin-top:20px}
 </style>
 </head>
 <body>
 
-<h2>Leitor de Gabarito – 70 Questões</h2>
+<h1>Leitor de Gabarito</h1>
 
 <div id="cameraContainer">
-<video id="video" autoplay playsinline></video>
-<div id="overlay"></div>
+    <video id="video" autoplay playsinline></video>
+    <div id="overlay"></div>
 </div>
 
 <button id="captureBtn">CAPTURAR</button>
@@ -30,213 +30,77 @@ body{font-family:Arial;margin:0;text-align:center;background:#111;color:#fff}
 <div id="resultado"></div>
 
 <script>
-
-let video=document.getElementById("video");
-let captureBtn=document.getElementById("captureBtn");
-let canvasOutput=document.getElementById("canvasOutput");
-let resultado=document.getElementById("resultado");
-
+let video=document.getElementById("video")
 navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"}})
-.then(s=>video.srcObject=s)
-.catch(e=>alert("Permita acesso à câmera."));
+.then(stream=>{video.srcObject=stream})
 
-let cameraReady=false;
-
-video.onloadeddata=()=>{
-let check=setInterval(()=>{
-if(video.videoWidth>0&&video.videoHeight>0){
-cameraReady=true;
-captureBtn.style.opacity="1";
-captureBtn.style.pointerEvents="auto";
-clearInterval(check);
-}
-},100);
-};
-
-function safeFrame(callback){
-let attempts=0;
-function tryFrame(){
-let w=video.videoWidth;
-let h=video.videoHeight;
-if(w>0&&h>0){
-let c=document.createElement("canvas");
-c.width=w;c.height=h;
-c.getContext("2d").drawImage(video,0,0,w,h);
-callback(c);
-} else {
-attempts++;
-if(attempts<10)setTimeout(tryFrame,100);
-else callback(null);
-}
-}
-tryFrame();
+function waitReady(){
+    return new Promise(r=>{
+        const c=()=>{video.readyState>=2?r():requestAnimationFrame(c)}
+        c()
+    })
 }
 
-function normalizarLAB(src){
-let lab=new cv.Mat();
-cv.cvtColor(src,lab,cv.COLOR_RGBA2LAB);
-let ch=new cv.MatVector();
-cv.split(lab,ch);
-let L=ch.get(0);
-let clahe=new cv.CLAHE(2.0,new cv.Size(8,8));
-clahe.apply(L,L);
-ch.set(0,L);
-cv.merge(ch,lab);
-let dst=new cv.Mat();
-cv.cvtColor(lab,dst,cv.COLOR_LAB2RGBA);
-lab.delete();ch.delete();L.delete();clahe.delete();
-return dst;
+const gabarito={}
+const letras=["A","B","C","D","E"]
+for(let i=1;i<=70;i++){
+    gabarito[i]=letras[(i-1)%5]
 }
 
-function removerGrade(img){
-let g=new cv.Mat();
-cv.cvtColor(img,g,cv.COLOR_RGBA2GRAY);
-let a=new cv.Mat();
-cv.adaptiveThreshold(g,a,255,cv.ADAPTIVE_THRESH_MEAN_C,cv.THRESH_BINARY_INV,15,10);
-let h=new cv.Mat(),v=new cv.Mat();
-let kh=cv.getStructuringElement(cv.MORPH_RECT,new cv.Size(40,1));
-let kv=cv.getStructuringElement(cv.MORPH_RECT,new cv.Size(1,40));
-cv.morphologyEx(a,h,cv.MORPH_OPEN,kh);
-cv.morphologyEx(a,v,cv.MORPH_OPEN,kv);
-let linhas=new cv.Mat();
-cv.add(h,v,linhas);
-cv.bitwise_not(linhas,linhas);
-let r=new cv.Mat();
-cv.bitwise_and(img,img,r,linhas);
-cv.medianBlur(r,r,3);
-g.delete();a.delete();h.delete();v.delete();kh.delete();kv.delete();linhas.delete();
-return r;
+document.getElementById("captureBtn").onclick=async()=>{
+    await waitReady()
+    let canvas=document.getElementById("canvasOutput")
+    let ctx=canvas.getContext("2d")
+    canvas.width=video.videoWidth
+    canvas.height=video.videoHeight
+    ctx.drawImage(video,0,0)
+
+    let src=cv.imread(canvas)
+    let gray=new cv.Mat()
+    cv.cvtColor(src,gray,cv.COLOR_RGBA2GRAY,0)
+    cv.GaussianBlur(gray,gray,new cv.Size(5,5),0)
+
+    let thresh=new cv.Mat()
+    cv.threshold(gray,thresh,0,255,cv.THRESH_BINARY_INV+cv.THRESH_OTSU)
+
+    let linhas=70
+    let colunas=5
+    let largura=Math.floor(thresh.cols/colunas)
+    let altura=Math.floor(thresh.rows/linhas)
+
+    let respostas={}
+    for(let q=1;q<=70;q++){
+        let linha=q-1
+        let y=linha*altura
+        let maiorSoma=0
+        let marcada=null
+
+        for(let c=0;c<5;c++){
+            let x=c*largura
+            let rec=thresh.roi(new cv.Rect(x,y,largura,altura))
+            let soma=cv.countNonZero(rec)
+            if(soma>maiorSoma){
+                maiorSoma=soma
+                marcada=letras[c]
+            }
+            rec.delete()
+        }
+
+        respostas[q]=marcada
+    }
+
+    let acertos=0
+    for(let i=1;i<=70;i++){
+        if(respostas[i]===gabarito[i])acertos++
+    }
+
+    document.getElementById("resultado").innerHTML=
+        "Acertos: "+acertos+" / 70"
+
+    gray.delete()
+    thresh.delete()
+    src.delete()
 }
-
-function mapearQuestoes(img){
-const larguraFinal=850;
-const alturaFinal=Math.round(larguraFinal*img.rows/img.cols);
-cv.resize(img,img,new cv.Size(larguraFinal,alturaFinal));
-let cinza=new cv.Mat();
-cv.cvtColor(img,cinza,cv.COLOR_RGBA2GRAY);
-let linhas=5;
-let colunas=14;
-let hLinha=alturaFinal/linhas;
-let wColuna=larguraFinal/colunas;
-let alternativas=["A","B","C","D","E"];
-let qtdAlt=5;
-let hAlt=hLinha/qtdAlt;
-let respostas=[];
-for(let L=0;L<linhas;L++){
-for(let C=0;C<colunas;C++){
-let x0=Math.floor(C*wColuna);
-let y0=Math.floor(L*hLinha);
-let intens=[];
-for(let a=0;a<qtdAlt;a++){
-let ry=Math.floor(y0+a*hAlt);
-let roi=cinza.roi(new cv.Rect(x0,ry,Math.floor(wColuna),Math.floor(hAlt)));
-intens.push(cv.mean(roi)[0]);
-roi.delete();
-}
-let menor=Math.min(...intens);
-let diffs=intens.map(v=>v-menor);
-let marcados=diffs.map((d,i)=>({d,i})).filter(o=>o.d<18).map(o=>o.i);
-let r;
-if(marcados.length===0)r="EM BRANCO";
-else if(marcados.length===1)r=alternativas[marcados[0]];
-else r="MAIS DE UMA";
-respostas.push(r);
-}
-}
-canvasOutput.width=larguraFinal;
-canvasOutput.height=alturaFinal;
-cv.imshow("canvasOutput",img);
-cinza.delete();
-return respostas;
-}
-
-function corrigir(respostas){
-let gabarito=[];
-let alt=["A","B","C","D","E"];
-for(let i=0;i<70;i++)gabarito.push(alt[i%5]);
-let acertos=0;
-let linhas=[];
-for(let i=0;i<70;i++){
-let q=i+1;
-let resp=respostas[i];
-let gab=gabarito[i];
-if(resp===gab)acertos++;
-linhas.push(q+" - "+resp+" (Gabarito: "+gab+")");
-}
-return {acertos,linhas};
-}
-
-captureBtn.onclick=()=>{
-if(!cameraReady){
-alert("A câmera ainda está carregando. Aguarde um segundo.");
-return;
-}
-
-safeFrame(temp=>{
-if(!temp){
-alert("Não foi possível capturar a imagem. Tente novamente.");
-return;
-}
-
-let src=cv.imread(temp);
-cv.resize(src,src,new cv.Size(1500,(src.rows*1500)/src.cols));
-
-let n1=normalizarLAB(src);
-let suav=new cv.Mat();
-cv.bilateralFilter(n1,suav,7,75,75);
-
-let g=new cv.Mat();
-let e=new cv.Mat();
-cv.cvtColor(suav,g,cv.COLOR_RGBA2GRAY);
-cv.Canny(g,e,50,150);
-
-let cnts=new cv.MatVector();
-let hier=new cv.Mat();
-cv.findContours(e,cnts,hier,cv.RETR_EXTERNAL,cv.CHAIN_APPROX_SIMPLE);
-
-let best=null,bestArea=0;
-for(let i=0;i<cnts.size();i++){
-let c=cnts.get(i);
-let peri=cv.arcLength(c,true);
-let approx=new cv.Mat();
-cv.approxPolyDP(c,approx,0.02*peri,true);
-if(approx.rows===4){
-let area=cv.contourArea(c);
-if(area>bestArea){bestArea=area;best=approx;}
-}
-}
-
-if(!best){alert("Folha não encontrada.");return;}
-
-let pts=[];
-for(let i=0;i<4;i++){
-let p=best.intPtr(i);
-pts.push(new cv.Point(p[0],p[1]));
-}
-pts.sort((a,b)=>a.x+a.y-(b.x+b.y));
-let tl=pts[0],br=pts[3];
-let tr=pts[1].x>pts[2].x?pts[1]:pts[2];
-let bl=pts[1].x>pts[2].x?pts[2]:pts[1];
-
-let w=Math.max(Math.hypot(tr.x-tl.x,tr.y-tl.y),Math.hypot(br.x-bl.x,br.y-bl.y));
-let h=Math.max(Math.hypot(tr.x-br.x,tr.y-br.y),Math.hypot(tl.x-bl.x,tl.y-bl.y));
-
-let srcQ=cv.matFromArray(4,1,cv.CV_32FC2,[tl.x,tl.y,tr.x,tr.y,br.x,br.y,bl.x,bl.y]);
-let dstQ=cv.matFromArray(4,1,cv.CV_32FC2,[0,0,w,0,w,h,0,h]);
-
-let M=cv.getPerspectiveTransform(srcQ,dstQ);
-let warped=new cv.Mat();
-cv.warpPerspective(src,warped,M,new cv.Size(w,h));
-
-let n2=normalizarLAB(warped);
-let semGrade=removerGrade(n2);
-let respostas=mapearQuestoes(semGrade);
-let r=corrigir(respostas);
-
-resultado.innerText="Acertos: "+r.acertos+"/70\n\n"+r.linhas.join("\n");
-});
-};
-
 </script>
 </body>
 </html>
