@@ -1,314 +1,235 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
-    <meta charset="UTF-8">
-    <title>Gabarito – Versão com Câmera</title>
-    <script async src="https://docs.opencv.org/4.x/opencv.js"></script>
-
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            margin: 0;
-            text-align: center;
-            background: #111;
-            color: white;
-        }
-
-        #cameraContainer {
-            position: relative;
-            width: 100%;
-            max-width: 480px;
-            margin: 20px auto;
-        }
-
-        #video {
-            width: 100%;
-            border-radius: 8px;
-        }
-
-        /* Moldura-guia */
-        #overlay {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            border: 4px solid rgba(255, 255, 0, 0.7);
-            box-sizing: border-box;
-            border-radius: 6px;
-            pointer-events: none;
-        }
-
-        #captureBtn {
-            margin-top: 15px;
-            padding: 12px 20px;
-            background: #28a745;
-            border: none;
-            border-radius: 6px;
-            font-size: 18px;
-            color: white;
-            cursor: pointer;
-        }
-
-        #canvasOutput {
-            margin: 20px auto;
-            max-width: 500px;
-            width: 100%;
-            border: 2px solid white;
-            background: black;
-        }
-    </style>
+<meta charset="UTF-8">
+<title>Leitor de Gabarito</title>
+<script async src="https://docs.opencv.org/4.x/opencv.js"></script>
+<style>
+body{font-family:Arial;margin:0;text-align:center;background:#111;color:#fff}
+#cameraContainer{position:relative;width:100%;max-width:480px;margin:20px auto}
+#video{width:100%;border-radius:8px}
+#overlay{position:absolute;top:0;left:0;width:100%;height:100%;border:4px solid rgba(255,255,0,0.7);border-radius:6px;pointer-events:none}
+#captureBtn{margin-top:15px;padding:12px 20px;background:#28a745;border:none;border-radius:6px;font-size:18px;color:white;cursor:pointer}
+#canvasOutput{margin:20px auto;max-width:500px;width:100%;border:2px solid white;background:black}
+#resultado{font-size:20px;margin-top:20px;white-space:pre-line}
+</style>
 </head>
 <body>
 
-<h2>Scanner de Gabarito – Versão de Teste</h2>
+<h2>Leitor de Gabarito – 70 Questões</h2>
 
 <div id="cameraContainer">
-    <video id="video" autoplay playsinline></video>
-    <div id="overlay"></div>
+<video id="video" autoplay playsinline></video>
+<div id="overlay"></div>
 </div>
 
-<button id="captureBtn">Capturar Foto</button>
-
-<br><br>
+<button id="captureBtn">Capturar</button>
 
 <canvas id="canvasOutput"></canvas>
 
+<div id="resultado"></div>
+
 <script>
 
-//////////////////////////////////////////////////////////////////
-// ABRIR CÂMERA
-//////////////////////////////////////////////////////////////////
+let video=document.getElementById("video");
+let canvasOutput=document.getElementById("canvasOutput");
+let resultado=document.getElementById("resultado");
 
-const video = document.getElementById("video");
-const canvasOutput = document.getElementById("canvasOutput");
-let stream;
+navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"}})
+.then(s=>video.srcObject=s)
+.catch(e=>alert("Permita acesso à câmera."));
 
-navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
-    .then(s => {
-        stream = s;
-        video.srcObject = s;
-    })
-    .catch(err => alert("Não foi possível acessar a câmera. Permita o acesso nas configurações."));
-
-//////////////////////////////////////////////////////////////////
-// FUNÇÃO: CAPTURAR FRAME DO VÍDEO
-//////////////////////////////////////////////////////////////////
-
-function capturarFrame() {
-    const canvasTemp = document.createElement("canvas");
-    canvasTemp.width = video.videoWidth;
-    canvasTemp.height = video.videoHeight;
-
-    const ctx = canvasTemp.getContext("2d");
-    ctx.drawImage(video, 0, 0);
-
-    return canvasTemp;
+function capturarFrame(){
+let c=document.createElement("canvas");
+c.width=video.videoWidth;
+c.height=video.videoHeight;
+let ctx=c.getContext("2d");
+ctx.drawImage(video,0,0);
+return c;
 }
 
-//////////////////////////////////////////////////////////////////
-// NORMALIZAÇÃO GLOBAL LAB + CLAHE
-//////////////////////////////////////////////////////////////////
-
-function normalizarLAB(src) {
-    let lab = new cv.Mat();
-    cv.cvtColor(src, lab, cv.COLOR_RGBA2LAB);
-
-    let channels = new cv.MatVector();
-    cv.split(lab, channels);
-
-    let l = channels.get(0);
-
-    let clahe = new cv.CLAHE(2.0, new cv.Size(8, 8));
-    clahe.apply(l, l);
-
-    channels.set(0, l);
-    cv.merge(channels, lab);
-
-    let dst = new cv.Mat();
-    cv.cvtColor(lab, dst, cv.COLOR_LAB2RGBA);
-
-    lab.delete(); channels.delete(); l.delete(); clahe.delete();
-    return dst;
+function normalizarLAB(src){
+let lab=new cv.Mat();
+cv.cvtColor(src,lab,cv.COLOR_RGBA2LAB);
+let ch=new cv.MatVector();
+cv.split(lab,ch);
+let L=ch.get(0);
+let clahe=new cv.CLAHE(2.0,new cv.Size(8,8));
+clahe.apply(L,L);
+ch.set(0,L);
+cv.merge(ch,lab);
+let dst=new cv.Mat();
+cv.cvtColor(lab,dst,cv.COLOR_LAB2RGBA);
+lab.delete();ch.delete();L.delete();clahe.delete();
+return dst;
 }
 
-//////////////////////////////////////////////////////////////////
-// REMOVER LINHAS DA GRADE
-//////////////////////////////////////////////////////////////////
-
-function removerGrade(img) {
-    let gray = new cv.Mat();
-    cv.cvtColor(img, gray, cv.COLOR_RGBA2GRAY);
-
-    let adapt = new cv.Mat();
-    cv.adaptiveThreshold(gray, adapt, 255, cv.ADAPTIVE_THRESH_MEAN_C, cv.THRESH_BINARY_INV, 15, 10);
-
-    let horiz = new cv.Mat();
-    let vert = new cv.Mat();
-    let kernelH = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(40, 1));
-    let kernelV = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(1, 40));
-
-    cv.morphologyEx(adapt, horiz, cv.MORPH_OPEN, kernelH);
-    cv.morphologyEx(adapt, vert, cv.MORPH_OPEN, kernelV);
-
-    let linhas = new cv.Mat();
-    cv.add(horiz, vert, linhas);
-    cv.bitwise_not(linhas, linhas);
-
-    let resultado = new cv.Mat();
-    cv.bitwise_and(img, img, resultado, linhas);
-
-    cv.medianBlur(resultado, resultado, 3);
-
-    gray.delete(); adapt.delete(); horiz.delete(); vert.delete(); kernelH.delete(); kernelV.delete(); linhas.delete();
-    return resultado;
+function removerGrade(img){
+let g=new cv.Mat();
+cv.cvtColor(img,g,cv.COLOR_RGBA2GRAY);
+let a=new cv.Mat();
+cv.adaptiveThreshold(g,a,255,cv.ADAPTIVE_THRESH_MEAN_C,cv.THRESH_BINARY_INV,15,10);
+let h=new cv.Mat(),v=new cv.Mat();
+let kh=cv.getStructuringElement(cv.MORPH_RECT,new cv.Size(40,1));
+let kv=cv.getStructuringElement(cv.MORPH_RECT,new cv.Size(1,40));
+cv.morphologyEx(a,h,cv.MORPH_OPEN,kh);
+cv.morphologyEx(a,v,cv.MORPH_OPEN,kv);
+let linhas=new cv.Mat();
+cv.add(h,v,linhas);
+cv.bitwise_not(linhas,linhas);
+let r=new cv.Mat();
+cv.bitwise_and(img,img,r,linhas);
+cv.medianBlur(r,r,3);
+g.delete();a.delete();h.delete();v.delete();kh.delete();kv.delete();linhas.delete();
+return r;
 }
 
-//////////////////////////////////////////////////////////////////
-// DIVISÃO EM GRADE + LEITURA DAS QUESTÕES
-//////////////////////////////////////////////////////////////////
+function mapearQuestoes(img){
+const larguraFinal=850;
+const alturaFinal=Math.round(larguraFinal*img.rows/img.cols);
+cv.resize(img,img,new cv.Size(larguraFinal,alturaFinal));
+let cinza=new cv.Mat();
+cv.cvtColor(img,cinza,cv.COLOR_RGBA2GRAY);
 
-function mapearQuestoes(img) {
+let linhas=5;
+let colunas=14;
+let hLinha=alturaFinal/linhas;
+let wColuna=larguraFinal/colunas;
 
-    const larguraFinal = 800;
-    const alturaFinal = Math.round(larguraFinal * img.rows / img.cols);
+let alternativas=["A","B","C","D","E"];
+let qtdAlt=5;
+let hAlt=hLinha/qtdAlt;
 
-    cv.resize(img, img, new cv.Size(larguraFinal, alturaFinal));
+let respostas=[];
+let numeroQuestao=1;
 
-    let cinza = new cv.Mat();
-    let bin = new cv.Mat();
-    cv.cvtColor(img, cinza, cv.COLOR_RGBA2GRAY);
-    cv.threshold(cinza, bin, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU);
+for(let L=0;L<linhas;L++){
+for(let C=0;C<colunas;C++){
 
-    let mapeado = img.clone();
+let x0=Math.floor(C*wColuna);
+let y0=Math.floor(L*hLinha);
+let intensidades=[];
 
-    let cols = 4;
-    let rows = 25;
-
-    let wCol = larguraFinal / cols;
-    let hRow = alturaFinal / rows;
-
-    let binCinza = new cv.Mat();
-    cv.cvtColor(bin, binCinza, cv.COLOR_GRAY2RGBA);
-
-    for (let c = 0; c < cols; c++) {
-        for (let r = 0; r < rows; r++) {
-
-            let x = c * wCol;
-            let y = r * hRow;
-
-            let partes = 6;
-            let wParte = wCol / partes;
-
-            let intensidades = [];
-
-            for (let p = 1; p < partes; p++) {
-                let rx = Math.floor(x + p * wParte);
-                let ry = Math.floor(y);
-
-                let roi = cinza.roi(new cv.Rect(rx, ry, Math.floor(wParte), Math.floor(hRow)));
-
-                intensidades.push(cv.mean(roi)[0]);
-                roi.delete();
-            }
-        }
-    }
-
-    canvasOutput.width = larguraFinal;
-    canvasOutput.height = alturaFinal;
-    cv.imshow("canvasOutput", img);
-
-    cinza.delete(); bin.delete(); mapeado.delete(); binCinza.delete();
+for(let a=0;a<qtdAlt;a++){
+let rx=x0;
+let ry=Math.floor(y0+a*hAlt);
+let roi=cinza.roi(new cv.Rect(rx,ry,Math.floor(wColuna),Math.floor(hAlt)));
+let m=cv.mean(roi)[0];
+intensidades.push(m);
+roi.delete();
 }
 
-//////////////////////////////////////////////////////////////////
-// PROCESSAMENTO COMPLETO (PIPELINE FINAL)
-//////////////////////////////////////////////////////////////////
+let menor=Math.min(...intensidades);
+let diffs=intensidades.map(v=>v-menor);
+let LIM=18;
+let marcados=diffs.map((d,i)=>({d,i})).filter(o=>o.d<LIM).map(o=>o.i);
 
-document.getElementById("captureBtn").onclick = () => {
+let r;
 
-    const canvasTemp = capturarFrame();
-    let src = cv.imread(canvasTemp);
+if(marcados.length===0) r="EM BRANCO";
+else if(marcados.length===1) r=alternativas[marcados[0]];
+else r="MAIS DE UMA";
 
-    cv.resize(src, src, new cv.Size(1500, (src.rows * 1500) / src.cols));
+respostas.push(r);
+numeroQuestao++;
+}
+}
 
-    let norm = normalizarLAB(src);
+canvasOutput.width=larguraFinal;
+canvasOutput.height=alturaFinal;
+cv.imshow("canvasOutput",img);
+cinza.delete();
+return respostas;
+}
 
-    let suavizada = new cv.Mat();
-    cv.bilateralFilter(norm, suavizada, 7, 75, 75);
+function corrigir(respostas){
+let gabarito=[];
+let alt=["A","B","C","D","E"];
+for(let i=0;i<70;i++){
+gabarito.push(alt[i%5]);
+}
+let acertos=0;
+let linhas=[];
+for(let i=0;i<70;i++){
+let q=i+1;
+let resp=respostas[i];
+let gab=gabarito[i];
+if(resp===gab) acertos++;
+linhas.push(q+" - "+resp+" (Gabarito: "+gab+")");
+}
+return {acertos,linhas};
+}
 
-    let gray = new cv.Mat();
-    let edges = new cv.Mat();
-    cv.cvtColor(suavizada, gray, cv.COLOR_RGBA2GRAY);
-    cv.Canny(gray, edges, 50, 150);
+document.getElementById("captureBtn").onclick=()=>{
+let temp=capturarFrame();
+let src=cv.imread(temp);
 
-    let contours = new cv.MatVector();
-    let hier = new cv.Mat();
-    cv.findContours(edges, contours, hier, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+cv.resize(src,src,new cv.Size(1500,(src.rows*1500)/src.cols));
+let n1=normalizarLAB(src);
+let suav=new cv.Mat();
+cv.bilateralFilter(n1,suav,7,75,75);
 
-    let melhor = null;
-    let maiorArea = 0;
+let g=new cv.Mat();
+let e=new cv.Mat();
+cv.cvtColor(suav,g,cv.COLOR_RGBA2GRAY);
+cv.Canny(g,e,50,150);
 
-    for (let i = 0; i < contours.size(); i++) {
-        let cnt = contours.get(i);
-        let peri = cv.arcLength(cnt, true);
-        let approx = new cv.Mat();
-        cv.approxPolyDP(cnt, approx, 0.02 * peri, true);
+let cnts=new cv.MatVector();
+let hier=new cv.Mat();
+cv.findContours(e,cnts,hier,cv.RETR_EXTERNAL,cv.CHAIN_APPROX_SIMPLE);
 
-        if (approx.rows === 4) {
-            let area = cv.contourArea(cnt);
-            if (area > maiorArea) {
-                maiorArea = area;
-                melhor = approx;
-            }
-        }
-    }
+let best=null;
+let bestArea=0;
 
-    if (!melhor) {
-        alert("Não foi possível encontrar a folha.");
-        return;
-    }
+for(let i=0;i<cnts.size();i++){
+let c=cnts.get(i);
+let peri=cv.arcLength(c,true);
+let approx=new cv.Mat();
+cv.approxPolyDP(c,approx,0.02*peri,true);
+if(approx.rows===4){
+let area=cv.contourArea(c);
+if(area>bestArea){
+bestArea=area;
+best=approx;
+}
+}
+}
 
-    let pts = [];
-    for (let i = 0; i < 4; i++) {
-        let p = melhor.intPtr(i);
-        pts.push(new cv.Point(p[0], p[1]));
-    }
+if(!best){alert("Folha não encontrada");return;}
 
-    pts.sort((a, b) => a.x + a.y - (b.x + b.y));
+let pts=[];
+for(let i=0;i<4;i++){
+let p=best.intPtr(i);
+pts.push(new cv.Point(p[0],p[1]));
+}
+pts.sort((a,b)=>a.x+a.y-(b.x+b.y));
+let tl=pts[0],br=pts[3];
+let tr=pts[1].x>pts[2].x?pts[1]:pts[2];
+let bl=pts[1].x>pts[2].x?pts[2]:pts[1];
 
-    let tl = pts[0];
-    let br = pts[3];
+let w=Math.max(
+Math.hypot(tr.x-tl.x,tr.y-tl.y),
+Math.hypot(br.x-bl.x,br.y-bl.y)
+);
+let h=Math.max(
+Math.hypot(tr.x-br.x,tr.y-br.y),
+Math.hypot(tl.x-bl.x,tl.y-bl.y)
+);
 
-    let tr = pts[1].x > pts[2].x ? pts[1] : pts[2];
-    let bl = pts[1].x <= pts[2].x ? pts[1] : pts[2];
+let srcQuad=cv.matFromArray(4,1,cv.CV_32FC2,[tl.x,tl.y,tr.x,tr.y,br.x,br.y,bl.x,bl.y]);
+let dstQuad=cv.matFromArray(4,1,cv.CV_32FC2,[0,0,w,0,w,h,0,h]);
 
-    let w = Math.max(
-        Math.hypot(tr.x - tl.x, tr.y - tl.y),
-        Math.hypot(br.x - bl.x, br.y - bl.y)
-    );
-    let h = Math.max(
-        Math.hypot(tr.x - br.x, tr.y - br.y),
-        Math.hypot(tl.x - bl.x, tl.y - bl.y)
-    );
+let M=cv.getPerspectiveTransform(srcQuad,dstQuad);
+let warped=new cv.Mat();
+cv.warpPerspective(src,warped,M,new cv.Size(w,h));
 
-    let srcQuad = cv.matFromArray(4, 1, cv.CV_32FC2, [
-        tl.x, tl.y, tr.x, tr.y, br.x, br.y, bl.x, bl.y
-    ]);
-    let dstQuad = cv.matFromArray(4, 1, cv.CV_32FC2, [
-        0, 0, w, 0, w, h, 0, h
-    ]);
+let n2=normalizarLAB(warped);
+let semGrade=removerGrade(n2);
 
-    let M = cv.getPerspectiveTransform(srcQuad, dstQuad);
-    let warped = new cv.Mat();
-    cv.warpPerspective(src, warped, M, new cv.Size(w, h));
+let respostas=mapearQuestoes(semGrade);
+let r=corrigir(respostas);
 
-    let norm2 = normalizarLAB(warped);
-
-    let semGrade = removerGrade(norm2);
-
-    mapearQuestoes(semGrade);
-
+resultado.innerText="Acertos: "+r.acertos+"/70\n\n"+r.linhas.join("\n");
 };
 
 </script>
