@@ -9,7 +9,7 @@ body{font-family:Arial;margin:0;text-align:center;background:#111;color:#fff}
 #cameraContainer{position:relative;width:100%;max-width:480px;margin:20px auto}
 #video{width:100%;height:auto;border-radius:8px;background:#000}
 #overlay{position:absolute;top:0;left:0;width:100%;height:100%;border:4px solid rgba(255,255,0,0.7);border-radius:6px;pointer-events:none}
-#captureBtn{margin-top:20px;width:80%;max-width:320px;height:60px;font-size:22px;background:#28a745;border:none;border-radius:10px;color:white;font-weight:bold;cursor:pointer}
+#captureBtn{margin-top:20px;width:80%;max-width:320px;height:60px;font-size:22px;background:#28a745;border:none;border-radius:10px;color:white;font-weight:bold;cursor:pointer;opacity:.4;pointer-events:none}
 #canvasOutput{margin:20px auto;max-width:500px;width:100%;border:2px solid white;background:#000}
 #resultado{font-size:20px;margin-top:20px;white-space:pre-line}
 </style>
@@ -32,6 +32,7 @@ body{font-family:Arial;margin:0;text-align:center;background:#111;color:#fff}
 <script>
 
 let video=document.getElementById("video");
+let captureBtn=document.getElementById("captureBtn");
 let canvasOutput=document.getElementById("canvasOutput");
 let resultado=document.getElementById("resultado");
 
@@ -39,14 +40,36 @@ navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"}})
 .then(s=>video.srcObject=s)
 .catch(e=>alert("Permita acesso à câmera."));
 
-function frame(){
+let cameraReady=false;
+
+video.onloadeddata=()=>{
+let check=setInterval(()=>{
+if(video.videoWidth>0&&video.videoHeight>0){
+cameraReady=true;
+captureBtn.style.opacity="1";
+captureBtn.style.pointerEvents="auto";
+clearInterval(check);
+}
+},100);
+};
+
+function safeFrame(callback){
+let attempts=0;
+function tryFrame(){
 let w=video.videoWidth;
 let h=video.videoHeight;
-if(w===0||h===0)return null;
+if(w>0&&h>0){
 let c=document.createElement("canvas");
 c.width=w;c.height=h;
 c.getContext("2d").drawImage(video,0,0,w,h);
-return c;
+callback(c);
+} else {
+attempts++;
+if(attempts<10)setTimeout(tryFrame,100);
+else callback(null);
+}
+}
+tryFrame();
 }
 
 function normalizarLAB(src){
@@ -91,45 +114,35 @@ const alturaFinal=Math.round(larguraFinal*img.rows/img.cols);
 cv.resize(img,img,new cv.Size(larguraFinal,alturaFinal));
 let cinza=new cv.Mat();
 cv.cvtColor(img,cinza,cv.COLOR_RGBA2GRAY);
-
 let linhas=5;
 let colunas=14;
 let hLinha=alturaFinal/linhas;
 let wColuna=larguraFinal/colunas;
-
 let alternativas=["A","B","C","D","E"];
 let qtdAlt=5;
 let hAlt=hLinha/qtdAlt;
-
 let respostas=[];
-let numeroQuestao=1;
-
 for(let L=0;L<linhas;L++){
 for(let C=0;C<colunas;C++){
 let x0=Math.floor(C*wColuna);
 let y0=Math.floor(L*hLinha);
-let intensidades=[];
+let intens=[];
 for(let a=0;a<qtdAlt;a++){
-let rx=x0;
 let ry=Math.floor(y0+a*hAlt);
-let roi=cinza.roi(new cv.Rect(rx,ry,Math.floor(wColuna),Math.floor(hAlt)));
-let m=cv.mean(roi)[0];
-intensidades.push(m);
+let roi=cinza.roi(new cv.Rect(x0,ry,Math.floor(wColuna),Math.floor(hAlt)));
+intens.push(cv.mean(roi)[0]);
 roi.delete();
 }
-let menor=Math.min(...intensidades);
-let diffs=intensidades.map(v=>v-menor);
-let LIM=18;
-let marcados=diffs.map((d,i)=>({d,i})).filter(o=>o.d<LIM).map(o=>o.i);
+let menor=Math.min(...intens);
+let diffs=intens.map(v=>v-menor);
+let marcados=diffs.map((d,i)=>({d,i})).filter(o=>o.d<18).map(o=>o.i);
 let r;
 if(marcados.length===0)r="EM BRANCO";
 else if(marcados.length===1)r=alternativas[marcados[0]];
 else r="MAIS DE UMA";
 respostas.push(r);
-numeroQuestao++;
 }
 }
-
 canvasOutput.width=larguraFinal;
 canvasOutput.height=alturaFinal;
 cv.imshow("canvasOutput",img);
@@ -153,10 +166,15 @@ linhas.push(q+" - "+resp+" (Gabarito: "+gab+")");
 return {acertos,linhas};
 }
 
-document.getElementById("captureBtn").onclick=()=>{
-let temp=frame();
+captureBtn.onclick=()=>{
+if(!cameraReady){
+alert("A câmera ainda está carregando. Aguarde um segundo.");
+return;
+}
+
+safeFrame(temp=>{
 if(!temp){
-alert("Câmera ainda carregando. Aguarde 1 segundo e tente novamente.");
+alert("Não foi possível capturar a imagem. Tente novamente.");
 return;
 }
 
@@ -216,6 +234,7 @@ let respostas=mapearQuestoes(semGrade);
 let r=corrigir(respostas);
 
 resultado.innerText="Acertos: "+r.acertos+"/70\n\n"+r.linhas.join("\n");
+});
 };
 
 </script>
